@@ -1,0 +1,367 @@
+---
+title: "Brown Bear VOC Profiling"
+output: html_notebook
+Author: Candace Williams, San Diego Zoo Wildlife Alliance
+---
+
+Input data
+```{r}
+setwd("~/Documents/Github/Claphametal_2023_BrownBear_VOC/")
+
+library(dplyr)
+
+groups_BB <-read.csv("data/groups.csv", header=TRUE, row.names=1) #this is your metadata 
+groups_BB$AgeSex <-paste(groups_BB$Age,groups_BB$Sex, sep = " ")
+groups_BB$AgeSexIDLoc <-paste(groups_BB$Age,groups_BB$Sex,groups_BB$ID,groups_BB$Loc, sep = " ")
+groups_BB$AgeSexID <-paste(groups_BB$Age,groups_BB$Sex,groups_BB$ID, sep = " ")
+groups_BB$key <- rownames(groups_BB)
+dim(groups_BB) # 77 x 8
+
+Compounds <-read.csv("data/Compound.csv",header=TRUE, row.names=1) #this is your dataframe
+Compounds <-sqrt(Compounds)  #square root transform compounds
+dim(Compounds) # 77 x 254
+
+#join
+Compounds_meta <- Compounds
+Compounds_meta$key <- rownames(Compounds_meta)
+Compounds_meta  <- Compounds_meta %>% 
+  inner_join(groups_BB)
+dim(Compounds_meta) # 77 x 262
+
+#Remove Y744 (only two observations)
+Compounds_meta <- Compounds_meta[!Compounds_meta$ID %in% c("Y744"),]
+```
+
+Functions
+```{r}
+## see http://www.cookbook-r.com/Graphs/Multiple_graphs_on_one_page_(ggplot2)/
+multiplot <- function(..., plotlist=NULL, file, cols=1, layout=NULL) {
+  library(grid)
+
+  # Make a list from the ... arguments and plotlist
+  plots <- c(list(...), plotlist)
+
+  numPlots = length(plots)
+
+  # If layout is NULL, then use 'cols' to determine layout
+  if (is.null(layout)) {
+    # Make the panel
+    # ncol: Number of columns of plots
+    # nrow: Number of rows needed, calculated from # of cols
+    layout <- matrix(seq(1, cols * ceiling(numPlots/cols)),
+                    ncol = cols, nrow = ceiling(numPlots/cols))
+  }
+
+ if (numPlots==1) {
+    print(plots[[1]])
+
+  } else {
+    # Set up the page
+    grid.newpage()
+    pushViewport(viewport(layout = grid.layout(nrow(layout), ncol(layout))))
+
+    # Make each plot, in the correct location
+    for (i in 1:numPlots) {
+      # Get the i,j matrix positions of the regions that contain this subplot
+      matchidx <- as.data.frame(which(layout == i, arr.ind = TRUE))
+
+      print(plots[[i]], vp = viewport(layout.pos.row = matchidx$row,
+                                      layout.pos.col = matchidx$col))
+    }
+  }
+}
+## Written by Andrew Steinberger, see https://github.com/asteinberger9/seq_scripts
+simper.pretty = function(x, metrics, interesting, perc_cutoff, low_cutoff, low_val, output_name)
+{library(vegan)
+  for(variables in interesting){
+    test_1=with(metrics, simper(x, metrics[[variables]]))
+    for(name in names(test_1)){
+      testmx=matrix(ncol=length(interesting))
+      testmx=cbind(test_1[[name]]$ord,test_1[[name]]$cusum)
+      sorted=testmx[order(testmx[,1]),]
+      sorted=cbind(sorted,test_1[[name]]$species)
+      sorted=sorted[order(sorted[,2]),]
+      t=sorted[sorted[,2]<=perc_cutoff,]
+      i=nrow(t)
+      while(i>1){
+        t[i,2]=as.character(as.numeric(t[i,2])-as.numeric(t[i-1,2]))
+        i=i-1
+      } 
+      t[,1]=name
+      write.table(t,file=paste(output_name,'_simper.csv',sep=""), append=TRUE, sep=",", col.names = FALSE)
+    }}
+  y=read.table(paste(output_name,'_simper.csv',sep=""), header=FALSE,sep=",",fill = TRUE,row.names = NULL)
+  file.remove(paste(output_name,'_simper.csv',sep = ""))
+  y=y[-c(1)]
+  colnames(y) = c("Comparison", "SIMPER", "OTU")
+  if(low_cutoff=='y'){
+    y=y[!(as.numeric(as.character(y$SIMPER))<low_val),]
+  }
+  write.csv(y,file=paste(output_name,'_clean_simper.csv', sep=''))
+}
+
+```
+
+***Figure 1 (and analyses)***
+
+<b>Comparisons across total number of compounds and condition <b>:
+Model: V1 ~ Age * Sex/ID/Loc
+```{r}
+library(dplyr)
+#Count only compounds that have above 0.5% RA.
+Compounds_sum <- data.frame(rowSums(Compounds_meta[,1:254]))
+Compounds_RA <- Compounds_meta[,1:254]/Compounds_sum$rowSums.Compounds_meta...1.254..*100
+Compounds_RA_sum <- data.frame(rowSums(Compounds_RA))
+Compounds_RA_t <- data.frame(t(Compounds_RA))
+count  <- Compounds_RA_t  %>%
+  dplyr::summarise(across(c(1:75), ~sum(as.numeric(.x > 0.5))))
+count <- as.data.frame(t(count))
+count
+count$key <- Compounds_meta$key
+count <- Compounds_meta %>% 
+  full_join(count, by = "key")
+
+#--Create Figure 1
+library(ggplot2)
+library(wesanderson)
+
+Order.lab <- c("Young female", "Mature female", "Young male", "Mature male")
+names(Order.lab) <- c("1", "2","3","4")
+count[count == "Toes"] <-  "Pedes"
+
+count_plot <- ggplot(data = count, aes(x = as.factor(Loc), y = as.numeric(V1), fill = Loc)) +
+  geom_boxplot(aes(alpha = 0.5)) +
+  scale_fill_manual(values= wes_palette("Cavalcanti1", n = 4)) +
+  geom_point() +
+  scale_color_manual(values= wes_palette("Cavalcanti1", n = 4)) +
+  scale_x_discrete(name ="Body Site") +
+  scale_y_continuous(name ="No. of compounds") +
+  theme_classic() +
+  theme(legend.position = "none") +
+  theme(axis.title.x = element_text(face = "bold", size = 12),
+        axis.title.y = element_text(face = "bold", size = 12))
+
+count_plot2 <- count_plot + facet_grid(~Order, 
+                        labeller = labeller (Order = Order.lab)) +
+  theme(strip.text = element_text(size=12, face="bold"))
+  
+count_plot2 
+ggsave(filename="figures/Compounds_SexAge_count_Figure1.png", width=8, height=4)
+
+#---Compare differences in total number of compounds across conditions
+fit <-aov(V1 ~ Age *  Sex + Sex/ID + Sex/ID/Loc, data=count)
+summary(fit)
+#TypeIII <-drop1(fit,~., test="F")    #type III SS and F tests
+#TypeIII
+MC <-TukeyHSD(fit)
+MC
+
+#Individual differences
+Ind_sig.MC <- data.frame(MC$`Sex:ID`)
+Ind_sig.MC <-na.omit(Ind_sig.MC, Ind_sig.MC$p.adj)
+Ind_sig.MC <- Ind_sig.MC[Ind_sig.MC$p.adj < 0.05,]
+
+#Age-sex differences
+age_sex_sig.MC <- data.frame(MC$`Age:Sex`)
+age_sex_sig.MC <-na.omit(age_sex_sig.MC, age_sex_sig.MC$p.adj)
+age_sex_sig.MC <- age_sex_sig.MC[age_sex_sig.MC$p.adj < 0.05,]
+
+```
+
+Beta-Diversity, composition and structure
+Full dataset & subsampled
+```{r}
+library(vegan)
+Compounds_RA_meta <- Compounds_RA 
+Compounds_RA_meta$key <- Compounds_meta$key
+Compounds_RA_meta <- Compounds_RA_meta %>% 
+  inner_join(groups_BB)
+Compounds_RA_meta$AgeSexID <- paste(Compounds_RA_meta$AgeSex,Compounds_RA_meta$ID, sep= "-")
+
+#DISPERSION--significantly different
+BC.dist <-vegdist(Compounds_RA_meta[,1:254],method="bray") 
+   anova(betadisper(BC.dist,Compounds_RA_meta$AgeSex))   
+   anova(betadisper(BC.dist,Compounds_RA_meta$ID))  
+
+   
+JC.dist <-vegdist(Compounds_RA_meta[,1:254],method="jaccard") 
+   anova(betadisper(JC.dist,Compounds_RA_meta$AgeSex)) 
+   anova(betadisper(JC.dist,Compounds_RA_meta$ID))  
+
+#PERMANOVAS--unbalanced
+BC_p <-adonis(Compounds_RA_meta[,1:254]~ Age *  Sex + AgeSex/ID + AgeSex/ID/Loc, data =Compounds_RA_meta, permutations=9999, method="bray", by="terms")
+  BC_ub_adj <- p.adjust(BC_p$aov.tab$`Pr(>F)`, method="fdr")
+  BC_ub_adj  
+
+Compounds~groups_BB$Age + groups_BB$Sex/groups_BB$ID/groups_BB$Loc   
+  
+#for Jaccard
+JC_p <-adonis(Compounds_RA_meta[,1:254]~Age *  Sex + Sex/ID + Sex/ID/Loc, data =Compounds_RA_meta, permutations=9999, method="jaccard", by="terms")
+  JC_ub_adj <- p.adjust(JC_p$aov.tab$`Pr(>F)`, method="fdr")
+  JC_ub_adj  
+
+#downsampling
+sample_n(groups_BB[groups_BB$AgeSex == "Adult Female",], 2) #keep Y866 & Y861
+sample_n(groups_BB[groups_BB$AgeSex == "Subadult Female",], 2) #keep Y867 & Y865
+sample_n(groups_BB[groups_BB$AgeSex == "Subadult Male",], 2) #keep Y864 & Y743
+sample_n(groups_BB[groups_BB$AgeSex == "Adult Male",], 2) #keep Y742 & Y868
+ID <- data.frame(as.factor(c("Y866", "Y861","Y867","Y865","Y864","Y743","Y742","Y868")))
+colnames(ID) <-"ID"
+
+Compounds_RA_meta$ID <- as.factor(Compounds_RA_meta$ID )
+
+Compounds_RA_meta_sub <- Compounds_RA_meta %>% 
+  inner_join(ID, by="ID")
+dim(Compounds_RA_meta_sub) #52x262
+
+BC.dist_bal <-vegdist(Compounds_RA_meta_sub[,1:254],method="bray") 
+   anova(betadisper(BC.dist_bal,Compounds_RA_meta_sub$AgeSex))  
+   anova(betadisper(BC.dist_bal,Compounds_RA_meta_sub$ID))  
+
+   
+JC.dist_bal <-vegdist(Compounds_RA_meta_sub[,1:254],method="jaccard") 
+   anova(betadisper(JC.dist_bal,Compounds_RA_meta_sub$AgeSex))  
+   anova(betadisper(JC.dist_bal,Compounds_RA_meta_sub$ID))  
+
+#PERMANOVAS--Balanced
+BC_p <-adonis(Compounds_RA_meta_sub[,1:254]~Age *  Sex + Sex/ID + Sex/ID/Loc, data =Compounds_RA_meta_sub, permutations=9999, method="bray", by="terms")
+  BC_b_adj <- p.adjust(BC_p$aov.tab$`Pr(>F)`, method="fdr")
+  BC_b_adj  
+
+#for Jaccard
+JC_p <-adonis(Compounds_RA_meta_sub[,1:254]~Age *  Sex + Sex/ID + Sex/ID/Loc, data =Compounds_RA_meta_sub, permutations=9999, method="jaccard", by="terms")
+  JC_b_adj <- p.adjust(JC_p$aov.tab$`Pr(>F)`, method="fdr")
+  JC_b_adj  
+```
+
+All Animal, nMDSs
+```{r}
+#Overall
+library(vegan)
+library(ggplot2)
+
+#Bray-Curtis
+BC.mds <- metaMDS(Compounds_RA_meta[,1:254], k=2, trace=FALSE, distance="bray")
+stressplot(BC.mds) 
+BC.mds <- metaMDS(Compounds_RA_meta[,1:254], k=3, trace=FALSE, distance="bray")
+stressplot(BC.mds) 
+
+BC_data.scores <- data.frame(scores(BC.mds)$sites)
+BC_data.scores$key <- Compounds_RA_meta$key
+
+overall <- BC_data.scores %>% 
+  inner_join(groups_BB)
+
+BC_plot_ID12 <-ggplot() +
+geom_point(data=overall,  aes(x=NMDS1, y=NMDS2, colour=ID, shape=Sex), size=3) +    theme_classic() +
+theme(legend.position = "none") 
+
+BC_plot_ID13 <-ggplot() +
+geom_point(data=overall,  aes(x=NMDS1, y=NMDS3, colour=ID, shape=Sex), size=3) +    theme_classic() +
+theme(legend.position = "none") 
+
+BC_plot_ID23 <-ggplot() +
+geom_point(data=overall,  aes(x=NMDS2, y=NMDS3, colour=ID, shape=Sex), size=3) +    theme_classic() #+
+#theme(legend.position = "none") 
+
+BB_all_nmds <-multiplot(BC_plot_ID12, BC_plot_ID13, BC_plot_ID23, cols=3)
+
+jpeg(filename = "BB_all_nmds.jpg", width= 1000, height = 400, units = "px", pointsize =12, quality = 600, bg = "white", res = NA)
+```
+
+Within Age-Sex classes, examining contributions of Individual and Bodysites
+```{r}
+#Adult Males----------
+Compounds_RA_meta_AM <- Compounds_RA_meta[Compounds_RA_meta$AgeSex == "Adult Male",]
+
+BC.dist <-vegdist(Compounds_RA_meta_AM[,1:254],method="bray") 
+   anova(betadisper(BC.dist,Compounds_RA_meta_AM$Loc)) 
+   anova(betadisper(BC.dist,Compounds_RA_meta_AM$ID))
+   
+JC.dist <-vegdist(Compounds_RA_meta_AM[,1:254],method="jaccard") 
+   anova(betadisper(JC.dist,Compounds_RA_meta_AM$Loc)) 
+   anova(betadisper(JC.dist,Compounds_RA_meta_AM$ID)) 
+
+#PERMANOVAS
+#Bray-Curtis
+BC_AM_p <-adonis(Compounds_RA_meta_AM[,1:254]~ ID + ID/Loc, data =Compounds_RA_meta_AM, permutations=9999, method="bray", by="terms")
+  BC_AM_ub_adj <- p.adjust(BC_AM_p$aov.tab$`Pr(>F)`, method="fdr")
+  BC_AM_ub_adj 
+
+#for Jaccard
+JC_AM_p <-adonis(Compounds_RA_meta_AM[,1:254]~ ID + ID/Loc, data =Compounds_RA_meta_AM, permutations=9999, method="jaccard", by="terms")
+  JC_AM_ub_adj <- p.adjust(JC_AM_p$aov.tab$`Pr(>F)`, method="fdr")
+  JC_AM_ub_adj 
+
+
+#Adult Females-------
+Compounds_RA_meta_AF <- Compounds_RA_meta[Compounds_RA_meta$AgeSex == "Adult Female",]
+
+BC.dist <-vegdist(Compounds_RA_meta_AF[,1:254],method="bray") 
+   anova(betadisper(BC.dist,Compounds_RA_meta_AF$Loc)) 
+   anova(betadisper(BC.dist,Compounds_RA_meta_AF$ID)) 
+   
+JC.dist <-vegdist(Compounds_RA_meta_AF[,1:254],method="jaccard") 
+   anova(betadisper(JC.dist,Compounds_RA_meta_AF$Loc))
+   anova(betadisper(JC.dist,Compounds_RA_meta_AF$ID)) 
+
+#PERMANOVAS
+#Bray-Curtis
+BC_AF_p <-adonis(Compounds_RA_meta_AF[,1:254]~ ID + ID/Loc, data =Compounds_RA_meta_AF, permutations=9999, method="bray", by="terms")
+  BC_AF_ub_adj <- p.adjust(BC_AF_p$aov.tab$`Pr(>F)`, method="fdr")
+  BC_AF_ub_adj 
+
+#for Jaccard
+JC_AF_p <-adonis(Compounds_RA_meta_AF[,1:254]~ ID + ID/Loc, data =Compounds_RA_meta_AF, permutations=9999, method="jaccard", by="terms")
+  JC_AF_ub_adj <- p.adjust(JC_AF_p$aov.tab$`Pr(>F)`, method="fdr")
+  JC_AF_ub_adj 
+
+  
+#Young Males----------
+Compounds_RA_meta_YM <- Compounds_RA_meta[Compounds_RA_meta$AgeSex == "Subadult Male",]
+
+BC.dist <-vegdist(Compounds_RA_meta_YM[,1:254],method="bray") 
+   anova(betadisper(BC.dist,Compounds_RA_meta_YM$Loc)) 
+   anova(betadisper(BC.dist,Compounds_RA_meta_YM$ID)) 
+   
+JC.dist <-vegdist(Compounds_RA_meta_YM[,1:254],method="jaccard") 
+   anova(betadisper(JC.dist,Compounds_RA_meta_YM$Loc)) 
+   anova(betadisper(JC.dist,Compounds_RA_meta_YM$ID)) 
+
+#PERMANOVA
+#Bray-Curtis
+BC_YM_p <-adonis(Compounds_RA_meta_YM[,1:254]~ ID + ID/Loc, data =Compounds_RA_meta_YM, permutations=9999, method="bray", by="terms")
+  BC_YM_ub_adj <- p.adjust(BC_YM_p$aov.tab$`Pr(>F)`, method="fdr")
+  BC_YM_ub_adj 
+
+#for Jaccard
+JC_YM_p <-adonis(Compounds_RA_meta_YM[,1:254]~ ID + ID/Loc, data =Compounds_RA_meta_YM, permutations=9999, method="jaccard", by="terms")
+  JC_YM_ub_adj <- p.adjust(JC_YM_p$aov.tab$`Pr(>F)`, method="fdr")
+  JC_YM_ub_adj 
+
+#Young Females------------
+Compounds_RA_meta_YF <- Compounds_RA_meta[Compounds_RA_meta$AgeSex == "Subadult Female",]
+
+BC.dist <-vegdist(Compounds_RA_meta_YF[,1:254],method="bray") 
+   anova(betadisper(BC.dist,Compounds_RA_meta_YF$Loc)) 
+   anova(betadisper(BC.dist,Compounds_RA_meta_YF$ID)) 
+   
+JC.dist <-vegdist(Compounds_RA_meta_YF[,1:254],method="jaccard") 
+   anova(betadisper(JC.dist,Compounds_RA_meta_YF$Loc))
+   anova(betadisper(JC.dist,Compounds_RA_meta_YF$ID)) 
+
+#PERMANOVAS
+#Bray-Curtis
+BC_YF_p <-adonis(Compounds_RA_meta_YF[,1:254]~ ID + ID/Loc, data =Compounds_RA_meta_YF, permutations=9999, method="bray", by="terms")
+  BC_YF_ub_adj <- p.adjust(BC_YF_p$aov.tab$`Pr(>F)`, method="fdr")
+  BC_YF_ub_adj 
+
+#for Jaccard
+JC_YF_p <-adonis(Compounds_RA_meta_YF[,1:254]~ ID + ID/Loc, data =Compounds_RA_meta_YF, permutations=9999, method="jaccard", by="terms")
+  JC_YF_ub_adj <- p.adjust(JC_YF_p$aov.tab$`Pr(>F)`, method="fdr")
+  JC_YF_ub_adj 
+
+```
+
+
+
